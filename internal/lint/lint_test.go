@@ -151,6 +151,41 @@ func TestGoodWhenAbsentPassesAndReadsAsBelow(t *testing.T) {
 	}
 }
 
+// The example shows good_when both ways: one floor (above) and one SLI that
+// states the default (below) explicitly, each covered by an SLO and a
+// burn-rate policy entry like every other SLI in the file.
+func TestExampleDeclaresAFloorAndAnExplicitCeiling(t *testing.T) {
+	p, _ := loadExample(t)
+	floor := typedSLI(t, p, "settlement_consumers_active")
+	if floor.Type != "threshold" || floor.GoodWhen != pack.GoodWhenAbove || floor.EffectiveGoodWhen() != pack.GoodWhenAbove {
+		t.Errorf("settlement_consumers_active must be a threshold SLI with good_when: above; got type=%q good_when=%q", floor.Type, floor.GoodWhen)
+	}
+	if floor.Threshold != 2 || floor.Unit != "consumers" {
+		t.Errorf("settlement_consumers_active must be a floor of 2 consumers; got threshold=%v unit=%q", floor.Threshold, floor.Unit)
+	}
+	if ceiling := typedSLI(t, p, "consumer_freshness"); ceiling.GoodWhen != pack.GoodWhenBelow {
+		t.Errorf("consumer_freshness must state good_when: below explicitly; got %q", ceiling.GoodWhen)
+	}
+	sloID := ""
+	for _, s := range p.Spec.SLOs {
+		if s.SLI == floor.ID {
+			sloID = s.ID
+		}
+	}
+	if sloID == "" {
+		t.Fatal("no SLO covers settlement_consumers_active")
+	}
+	covered := false
+	for _, br := range p.Spec.Policy.BurnRateAlerts {
+		if br.SLO == sloID && len(br.Windows) >= 2 {
+			covered = true
+		}
+	}
+	if !covered {
+		t.Errorf("no burn-rate policy entry with two windows for %s", sloID)
+	}
+}
+
 func TestEffectiveGoodWhen(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"", pack.GoodWhenBelow},

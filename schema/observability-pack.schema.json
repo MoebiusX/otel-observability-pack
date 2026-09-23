@@ -195,10 +195,10 @@
         "expression":     { "type": "string" }
       },
       "allOf": [
-        { "if": { "properties": { "type": { "const": "ratio" } } },        "then": { "required": ["good","total"],                  "properties": { "good_when": false } } },
+        { "if": { "properties": { "type": { "const": "ratio" } } },        "then": { "required": ["good","total"],                  "properties": { "good_when": { "not": {} } } } },
         { "if": { "properties": { "type": { "const": "threshold" } } },    "then": { "required": ["query","threshold"] } },
         { "if": { "properties": { "type": { "const": "distribution" } } }, "then": { "required": ["query","percentile","threshold"] } },
-        { "if": { "properties": { "type": { "const": "custom" } } },       "then": { "required": ["expression"],                    "properties": { "good_when": false } } }
+        { "if": { "properties": { "type": { "const": "custom" } } },       "then": { "required": ["expression"],                    "properties": { "good_when": { "not": {} } } } }
       ]
     },
 

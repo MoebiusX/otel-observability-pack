@@ -77,7 +77,7 @@ The bound itself is good in both directions (the comparison is strict on the bad
 
 ### 3.2 Semantics
 
-- `good_when` is meaningful only where a bound exists: `threshold` and `distribution` SLIs. On `ratio` and `custom` SLIs it is invalid (schema: `properties.good_when: false` in their `then` branches).
+- `good_when` is meaningful only where a bound exists: `threshold` and `distribution` SLIs. On `ratio` and `custom` SLIs it is invalid (schema: `properties.good_when: { not: {} }` in their `then` branches — a `not` sub-schema rather than the boolean `false`, so that a minimal Draft 2020 walker that only descends into object sub-schemas enforces the placement as well).
 - For a `distribution` SLI the bound applies to the value at `percentile`; `good_when` says which side of that value is good, exactly as for `threshold`.
 - The field changes no arithmetic other than the comparison. Error ratio, burn rate, error budget and objective keep their definitions: a bad sample is a bad sample whichever side it fell on.
 - Absent means `below`. A validator MUST treat a missing `good_when` as `below`; it MUST NOT require the field.
@@ -161,7 +161,7 @@ Let a negative `threshold` mean a floor, or add a sign convention in the query.
 
 The Go linter in this repository is the reference validator:
 
-- `schema/observability-pack.schema.json` — `good_when` on `$defs/SLI` (`enum: [below, above]`, `default: below`); the existing `allOf` if/then gains `"properties": { "good_when": false }` in the `ratio` and `custom` branches, so a misplaced field is a schema violation (`/spec/slis/N/good_when: not allowed`) and a bad value is `value must be one of "below", "above"`.
+- `schema/observability-pack.schema.json` — `good_when` on `$defs/SLI` (`enum: [below, above]`, `default: below`); the existing `allOf` if/then gains `"properties": { "good_when": { "not": {} } }` in the `ratio` and `custom` branches, so a misplaced field is a schema violation (`/spec/slis/N/good_when: not failed`; Observogram's vendored walker reports the same case as `matches forbidden 'not' schema`, which the boolean form `false` would not have produced there) and a bad value is `value must be one of "below", "above"`.
 - `internal/pack/pack.go` — `SLI.GoodWhen` (`json:"good_when,omitempty"`), the constants `GoodWhenBelow` / `GoodWhenAbove`, and `(SLI).EffectiveGoodWhen()`, which returns `GoodWhenBelow` when the field is absent. Downstream Go code reads the direction through the accessor, never the raw field, so the default lives in one place.
 - `internal/lint/lint_test.go` — a threshold SLI with `above` validates; `sideways` fails naming the field; `good_when` on a ratio SLI fails; absent passes; the example passes.
 - `examples/payment-service.pack.yaml` — `settlement_consumers_active`, a floor of two live settlement consumers, next to `consumer_freshness`, which states the default `below` explicitly.

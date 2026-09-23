@@ -132,6 +132,13 @@ func TestGoodWhenOnRatioFails(t *testing.T) {
 	if !strings.HasPrefix(f.Path, "/spec/slis/") {
 		t.Errorf("finding must point into spec.slis; got path %q", f.Path)
 	}
+	// The placement rule is `"good_when": { "not": {} }` in the ratio branch;
+	// santhosh-tekuri v5 reports a value caught by a `not` sub-schema as
+	// "not failed". Pinned like the enum message above, so a change of
+	// mechanism is a visible change.
+	if f.Message != "not failed" {
+		t.Errorf("message must say the not-subschema refused the field; got %q", f.Message)
+	}
 }
 
 func TestGoodWhenAbsentPassesAndReadsAsBelow(t *testing.T) {

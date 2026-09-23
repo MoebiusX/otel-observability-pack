@@ -108,7 +108,7 @@ The bound itself is good in both directions (the comparison is strict on the bad
 - **1.2 packs are unchanged.** No 1.2 pack contains `good_when` (the schema's `additionalProperties: false` refused it), so every existing pack validates against the 1.3 schema and means what it meant.
 - **Validators treat absent as `below`.** A 1.3 validator applied to a 1.2 pack reaches the same verdict as a 1.2 validator.
 - **`apiVersion` stays `observability.platform/v1`.** The manifest shape gains an optional field; nothing is renamed, removed or re-typed.
-- **A 1.2 consumer reading a 1.3 pack** that uses `above` will misread the floor as a ceiling. That is the failure mode this RFC removes for consumers that upgrade; consumers that vendor the spec should refuse `good_when: above` until they implement it rather than silently invert it (see §5).
+- **A 1.2 consumer reading a 1.3 pack** that uses `above`: a consumer that validates against the 1.2 schema (as Observogram does with its vendored copy) refuses the whole field — `$defs/SLI` has `additionalProperties: false`, so `good_when` is an unknown property there — until it vendors 1.3; it neither misreads the floor nor needs any advice. Only a consumer that reads packs without validating would misread the floor as a ceiling, which is why such a consumer must implement `good_when` before accepting 1.3 packs rather than silently invert it (see §5).
 
 ---
 

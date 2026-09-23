@@ -166,7 +166,7 @@ The Go linter in this repository is the reference validator:
 - `internal/lint/lint_test.go` — a threshold SLI with `above` validates; `sideways` fails naming the field; `good_when` on a ratio SLI fails; absent passes; the example passes.
 - `examples/payment-service.pack.yaml` — `settlement_consumers_active`, a floor of two live settlement consumers, next to `consumer_freshness`, which states the default `below` explicitly.
 
-Nothing in the linter's conformance rubric changes: tier clause 2.1 keeps counting `threshold` and `distribution` SLIs by type.
+Nothing in the linter's conformance rubric changes: tier clause 2.1 keeps counting `threshold` and `distribution` SLIs by type, so a pack whose only `threshold` SLI is a floor (`good_when: above`) satisfies the "latency SLI" clause; `docs/maturity-model.md` says so in the clause's conformance cell. Tightening 2.1 to `good_when: below` would be a rubric change, not part of this RFC, and is left to a rubric revision.
 
 ---
 

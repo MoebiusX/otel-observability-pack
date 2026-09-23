@@ -141,6 +141,30 @@ func TestGoodWhenOnRatioFails(t *testing.T) {
 	}
 }
 
+// The custom branch carries the same placement rule as the ratio branch;
+// the example has no custom SLI, so one is made from api_availability.
+func TestGoodWhenOnCustomFails(t *testing.T) {
+	p, schema := loadExample(t)
+	s := rawSLI(t, p, "api_availability")
+	s["type"] = "custom"
+	s["expression"] = "1"
+	s["good_when"] = "below"
+	r := runSchema(t, p, schema)
+	if r.SchemaOK {
+		t.Fatal("good_when on a custom SLI must fail the schema, even with a valid value")
+	}
+	f := findingOnGoodWhen(r)
+	if f == nil {
+		t.Fatalf("expected a finding naming good_when on the custom SLI; got %v", r.Findings)
+	}
+	if !strings.HasPrefix(f.Path, "/spec/slis/") {
+		t.Errorf("finding must point into spec.slis; got path %q", f.Path)
+	}
+	if f.Message != "not failed" {
+		t.Errorf("message must say the not-subschema refused the field; got %q", f.Message)
+	}
+}
+
 func TestGoodWhenAbsentPassesAndReadsAsBelow(t *testing.T) {
 	p, schema := loadExample(t)
 	if _, declared := rawSLI(t, p, "api_latency_p99")["good_when"]; declared {

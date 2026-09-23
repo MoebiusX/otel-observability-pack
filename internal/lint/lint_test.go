@@ -222,6 +222,10 @@ func TestEffectiveGoodWhen(t *testing.T) {
 		{"", pack.GoodWhenBelow},
 		{"below", pack.GoodWhenBelow},
 		{"above", pack.GoodWhenAbove},
+		// The accessor supplies the default, not validation: an invalid value
+		// comes back unchanged. lint.Schema is the gate; the operator path,
+		// which runs only lint.Refs, must check the result itself.
+		{"sideways", "sideways"},
 	} {
 		if got := (pack.SLI{GoodWhen: tc.in}).EffectiveGoodWhen(); got != tc.want {
 			t.Errorf("EffectiveGoodWhen(%q) = %q, want %q", tc.in, got, tc.want)

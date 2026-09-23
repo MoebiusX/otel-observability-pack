@@ -144,7 +144,8 @@ slis:
   - id: settlement_in_sync_replicas     # a floor; fewer than two in-sync replicas is bad
     type: threshold
     good_when: above
-    query: min(kafka_partition_in_sync_replicas{topic="settlements"})
+    semconv_metric: kafka.partition.replicas_in_sync   # OTel Collector kafkametrics receiver
+    query: min(kafka_partition_replicas_in_sync{topic="settlements"})
     threshold: 2
     unit: replicas
 ```

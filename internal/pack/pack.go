@@ -149,9 +149,37 @@ type SLI struct {
 	Total         string  `json:"total,omitempty"`
 	Query         string  `json:"query,omitempty"`
 	Threshold     float64 `json:"threshold,omitempty"`
+	GoodWhen      string  `json:"good_when,omitempty"` // spec 1.3: below | above; read it through EffectiveGoodWhen
 	Unit          string  `json:"unit,omitempty"`
 	Percentile    float64 `json:"percentile,omitempty"`
 	Expression    string  `json:"expression,omitempty"`
+}
+
+// Values of SLI.GoodWhen, the direction of a threshold or distribution
+// SLI's bound (spec 1.3, §5.1).
+const (
+	GoodWhenBelow = "below" // a sample is good at or below the bound: latency, lag, error rate (the default)
+	GoodWhenAbove = "above" // a sample is good at or above the bound, a floor: replicas, capacity, consumers
+)
+
+// EffectiveGoodWhen returns the direction of the SLI's bound, reading an
+// absent good_when as GoodWhenBelow: spec 1.3 says absent means below, which
+// is the only meaning a 1.2 pack could express. Downstream code reads the
+// direction through this accessor, never the raw field, so the default lives
+// in one place. It is only meaningful for threshold and distribution SLIs;
+// the schema refuses the field on the other types.
+//
+// It supplies the default, not validation: a value other than GoodWhenBelow
+// or GoodWhenAbove is returned unchanged. packlint's schema pass
+// (lint.Schema) is the gate that rejects such a value. The operator
+// (internal/operator/operator.go) parses the manifest from the CRD and runs
+// only lint.Refs, so a consumer there must check the result against the two
+// constants before branching on it, or run lint.Schema first.
+func (s SLI) EffectiveGoodWhen() string {
+	if s.GoodWhen == "" {
+		return GoodWhenBelow
+	}
+	return s.GoodWhen
 }
 
 type SLO struct {

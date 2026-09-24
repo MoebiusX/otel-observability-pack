@@ -2,6 +2,7 @@ package lint_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/example/observability-pack/internal/lint"
@@ -17,6 +18,219 @@ func repoRoot(t *testing.T) string {
 		t.Fatalf("abs root: %v", err)
 	}
 	return root
+}
+
+// loadExample loads the reference pack and returns it with the schema path,
+// so a test can edit the raw document and run the schema pass on the result
+// exactly as packlint would.
+func loadExample(t *testing.T) (*pack.Pack, string) {
+	t.Helper()
+	root := repoRoot(t)
+	p, err := pack.Load(filepath.Join(root, "examples", "payment-service.pack.yaml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	return p, filepath.Join(root, "schema", "observability-pack.schema.json")
+}
+
+// rawSLI returns the raw (schema-side) document of the SLI with the given id.
+// The map is shared with p.Raw, so edits reach the schema pass.
+func rawSLI(t *testing.T, p *pack.Pack, id string) map[string]any {
+	t.Helper()
+	spec, _ := p.Raw["spec"].(map[string]any)
+	slis, _ := spec["slis"].([]any)
+	for _, s := range slis {
+		if m, ok := s.(map[string]any); ok && m["id"] == id {
+			return m
+		}
+	}
+	t.Fatalf("no SLI %q in the example", id)
+	return nil
+}
+
+// typedSLI returns the parsed (Go-side) SLI with the given id.
+func typedSLI(t *testing.T, p *pack.Pack, id string) pack.SLI {
+	t.Helper()
+	for _, s := range p.Spec.SLIs {
+		if s.ID == id {
+			return s
+		}
+	}
+	t.Fatalf("no SLI %q in the example", id)
+	return pack.SLI{}
+}
+
+func runSchema(t *testing.T, p *pack.Pack, schemaPath string) *lint.Result {
+	t.Helper()
+	r := &lint.Result{}
+	if err := lint.Schema(p, schemaPath, r); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	return r
+}
+
+// findingOnGoodWhen returns the schema finding whose instance path ends in
+// /good_when, i.e. the one that names the field, or nil.
+func findingOnGoodWhen(r *lint.Result) *lint.Finding {
+	for i := range r.Findings {
+		if strings.HasSuffix(r.Findings[i].Path, "/good_when") {
+			return &r.Findings[i]
+		}
+	}
+	return nil
+}
+
+func TestGoodWhenAboveOnThresholdValidates(t *testing.T) {
+	p, schema := loadExample(t)
+	rawSLI(t, p, "api_latency_p99")["good_when"] = "above"
+	if r := runSchema(t, p, schema); !r.SchemaOK {
+		t.Errorf("threshold SLI with good_when: above must validate; findings: %v", r.Findings)
+	}
+}
+
+func TestGoodWhenAboveOnDistributionValidates(t *testing.T) {
+	p, schema := loadExample(t)
+	s := rawSLI(t, p, "api_latency_p99")
+	s["type"] = "distribution"
+	s["percentile"] = 0.99
+	s["good_when"] = "above"
+	if r := runSchema(t, p, schema); !r.SchemaOK {
+		t.Errorf("distribution SLI with good_when: above must validate; findings: %v", r.Findings)
+	}
+}
+
+func TestGoodWhenBadValueFailsNamingTheField(t *testing.T) {
+	p, schema := loadExample(t)
+	rawSLI(t, p, "api_latency_p99")["good_when"] = "sideways"
+	r := runSchema(t, p, schema)
+	if r.SchemaOK {
+		t.Fatal("good_when: sideways must fail the schema")
+	}
+	f := findingOnGoodWhen(r)
+	if f == nil {
+		t.Fatalf("expected a finding naming good_when; got %v", r.Findings)
+	}
+	if f.Severity != lint.SeverityError || f.Code != "schema/violation" {
+		t.Errorf("finding must be an error schema/violation; got %+v", *f)
+	}
+	if !strings.Contains(f.Message, `"below"`) || !strings.Contains(f.Message, `"above"`) {
+		t.Errorf("message must name the two allowed values; got %q", f.Message)
+	}
+}
+
+func TestGoodWhenOnRatioFails(t *testing.T) {
+	p, schema := loadExample(t)
+	rawSLI(t, p, "api_availability")["good_when"] = "below"
+	r := runSchema(t, p, schema)
+	if r.SchemaOK {
+		t.Fatal("good_when on a ratio SLI must fail the schema, even with a valid value")
+	}
+	f := findingOnGoodWhen(r)
+	if f == nil {
+		t.Fatalf("expected a finding naming good_when on the ratio SLI; got %v", r.Findings)
+	}
+	if !strings.HasPrefix(f.Path, "/spec/slis/") {
+		t.Errorf("finding must point into spec.slis; got path %q", f.Path)
+	}
+	// The placement rule is `"good_when": { "not": {} }` in the ratio branch;
+	// santhosh-tekuri v5 reports a value caught by a `not` sub-schema as
+	// "not failed". Pinned like the enum message above, so a change of
+	// mechanism is a visible change.
+	if f.Message != "not failed" {
+		t.Errorf("message must say the not-subschema refused the field; got %q", f.Message)
+	}
+}
+
+// The custom branch carries the same placement rule as the ratio branch;
+// the example has no custom SLI, so one is made from api_availability.
+func TestGoodWhenOnCustomFails(t *testing.T) {
+	p, schema := loadExample(t)
+	s := rawSLI(t, p, "api_availability")
+	s["type"] = "custom"
+	s["expression"] = "1"
+	s["good_when"] = "below"
+	r := runSchema(t, p, schema)
+	if r.SchemaOK {
+		t.Fatal("good_when on a custom SLI must fail the schema, even with a valid value")
+	}
+	f := findingOnGoodWhen(r)
+	if f == nil {
+		t.Fatalf("expected a finding naming good_when on the custom SLI; got %v", r.Findings)
+	}
+	if !strings.HasPrefix(f.Path, "/spec/slis/") {
+		t.Errorf("finding must point into spec.slis; got path %q", f.Path)
+	}
+	if f.Message != "not failed" {
+		t.Errorf("message must say the not-subschema refused the field; got %q", f.Message)
+	}
+}
+
+func TestGoodWhenAbsentPassesAndReadsAsBelow(t *testing.T) {
+	p, schema := loadExample(t)
+	if _, declared := rawSLI(t, p, "api_latency_p99")["good_when"]; declared {
+		t.Fatal("test premise: the example's api_latency_p99 must not declare good_when")
+	}
+	if r := runSchema(t, p, schema); !r.SchemaOK {
+		t.Errorf("a threshold SLI without good_when must validate; findings: %v", r.Findings)
+	}
+	s := typedSLI(t, p, "api_latency_p99")
+	if s.GoodWhen != "" {
+		t.Errorf("raw field must stay empty when absent; got %q", s.GoodWhen)
+	}
+	if got := s.EffectiveGoodWhen(); got != pack.GoodWhenBelow {
+		t.Errorf("absent good_when must read as %q; got %q", pack.GoodWhenBelow, got)
+	}
+}
+
+// The example shows good_when both ways: one floor (above) and one SLI that
+// states the default (below) explicitly, each covered by an SLO and a
+// burn-rate policy entry like every other SLI in the file.
+func TestExampleDeclaresAFloorAndAnExplicitCeiling(t *testing.T) {
+	p, _ := loadExample(t)
+	floor := typedSLI(t, p, "settlement_consumers_active")
+	if floor.Type != "threshold" || floor.GoodWhen != pack.GoodWhenAbove || floor.EffectiveGoodWhen() != pack.GoodWhenAbove {
+		t.Errorf("settlement_consumers_active must be a threshold SLI with good_when: above; got type=%q good_when=%q", floor.Type, floor.GoodWhen)
+	}
+	if floor.Threshold != 2 || floor.Unit != "consumers" {
+		t.Errorf("settlement_consumers_active must be a floor of 2 consumers; got threshold=%v unit=%q", floor.Threshold, floor.Unit)
+	}
+	if ceiling := typedSLI(t, p, "consumer_freshness"); ceiling.GoodWhen != pack.GoodWhenBelow {
+		t.Errorf("consumer_freshness must state good_when: below explicitly; got %q", ceiling.GoodWhen)
+	}
+	sloID := ""
+	for _, s := range p.Spec.SLOs {
+		if s.SLI == floor.ID {
+			sloID = s.ID
+		}
+	}
+	if sloID == "" {
+		t.Fatal("no SLO covers settlement_consumers_active")
+	}
+	covered := false
+	for _, br := range p.Spec.Policy.BurnRateAlerts {
+		if br.SLO == sloID && len(br.Windows) >= 2 {
+			covered = true
+		}
+	}
+	if !covered {
+		t.Errorf("no burn-rate policy entry with two windows for %s", sloID)
+	}
+}
+
+func TestEffectiveGoodWhen(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", pack.GoodWhenBelow},
+		{"below", pack.GoodWhenBelow},
+		{"above", pack.GoodWhenAbove},
+		// The accessor supplies the default, not validation: an invalid value
+		// comes back unchanged. lint.Schema is the gate; the operator path,
+		// which runs only lint.Refs, must check the result itself.
+		{"sideways", "sideways"},
+	} {
+		if got := (pack.SLI{GoodWhen: tc.in}).EffectiveGoodWhen(); got != tc.want {
+			t.Errorf("EffectiveGoodWhen(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
 }
 
 func TestPaymentServiceExampleLoads(t *testing.T) {

@@ -1,7 +1,7 @@
 # ObservabilityPack — OTel Binding for Prometheus / Elasticsearch / Grafana
 
 **Binding ID:** `otel-elastic-prometheus-grafana`
-**Spec version:** `1.2`
+**Spec version:** `1.3`
 **Pack apiVersion:** `observability.platform/v1`
 **Status:** Draft for review
 **Owner:** KrystalineX Platform Engineering — Observability Practice
@@ -144,6 +144,8 @@ slis:
 ```
 
 The `semconv_metric` field is the canonical OTel name. The `query` field is the materialised PromQL after the prometheusexporter has translated the OTel metric into its Prom equivalent (dots become underscores, units appended). The operator validates that the two are consistent.
+
+`threshold` is the bound, in `unit`; `good_when` (spec 1.3, default `below`) says which side of it is good. When the operator renders a `threshold` or `distribution` SLI into Prometheus recording and alerting rules (§6.2) or into a Grafana threshold step, the bad-sample comparison follows `good_when`: bad = samples above the bound when `below`, bad = samples under the bound when `above`; the bound itself is good either way. A 1.2 pack cannot say `good_when` and renders exactly as before.
 
 ---
 

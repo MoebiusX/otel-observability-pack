@@ -233,6 +233,167 @@ func TestEffectiveGoodWhen(t *testing.T) {
 	}
 }
 
+// rawAlerting returns the raw (schema-side) spec.alerting block. The map is
+// shared with p.Raw, so edits reach the schema pass.
+func rawAlerting(t *testing.T, p *pack.Pack) map[string]any {
+	t.Helper()
+	spec, _ := p.Raw["spec"].(map[string]any)
+	alerting, ok := spec["alerting"].(map[string]any)
+	if !ok {
+		t.Fatal("the example has no spec.alerting block")
+	}
+	return alerting
+}
+
+// rawAlertRule returns the raw alerting.rules entry with the given name.
+func rawAlertRule(t *testing.T, p *pack.Pack, name string) map[string]any {
+	t.Helper()
+	rules, _ := rawAlerting(t, p)["rules"].([]any)
+	for _, r := range rules {
+		if m, ok := r.(map[string]any); ok && m["name"] == name {
+			return m
+		}
+	}
+	t.Fatalf("no alerting rule %q in the example", name)
+	return nil
+}
+
+// findingUnder returns the first schema finding whose instance path has the
+// given prefix, or nil.
+func findingUnder(r *lint.Result, prefix string) *lint.Finding {
+	for i := range r.Findings {
+		if strings.HasPrefix(r.Findings[i].Path, prefix) {
+			return &r.Findings[i]
+		}
+	}
+	return nil
+}
+
+// Spec 1.4: the example declares three operational rules under
+// alerting.rules — two Prometheus rules (one with the default engine stated,
+// one leaving it absent) and one Grafana-managed rule — and none of them is a
+// burn-rate alert (none names an SLO of the pack).
+func TestExampleDeclaresOperationalAlertRules(t *testing.T) {
+	p, _ := loadExample(t)
+	rules := p.Spec.Alerting.Rules
+	if len(rules) != 3 {
+		t.Fatalf("example alerting.rules: got %d, want 3", len(rules))
+	}
+	want := map[string]string{
+		"PaymentServicePodRestarting":      pack.AlertEnginePrometheus,
+		"PaymentDbConnectionPoolSaturated": pack.AlertEnginePrometheus,
+		"PaymentCertificateExpiringSoon":   pack.AlertEngineGrafana,
+	}
+	for _, r := range rules {
+		engine, ok := want[r.Name]
+		if !ok {
+			t.Errorf("unexpected rule %q", r.Name)
+			continue
+		}
+		if r.EffectiveEngine() != engine {
+			t.Errorf("%s: EffectiveEngine() = %q, want %q", r.Name, r.EffectiveEngine(), engine)
+		}
+		if r.Expr == "" || r.Severity == "" || r.For == "" || r.Labels["severity"] == "" || r.Source == "" {
+			t.Errorf("%s: the example states expr, severity, for, labels.severity and source; got %+v", r.Name, r)
+		}
+		for _, slo := range p.Spec.SLOs {
+			if strings.Contains(r.Expr, slo.ID) || r.Labels["slo"] == slo.ID {
+				t.Errorf("%s names SLO %s: a burn-rate alert belongs in policy.burn_rate_alerts, not alerting.rules", r.Name, slo.ID)
+			}
+		}
+	}
+	if typed := p.Spec.Alerting.Rules[1]; typed.Engine != "" {
+		t.Errorf("PaymentDbConnectionPoolSaturated must leave engine absent to show the default; got %q", typed.Engine)
+	}
+}
+
+// A 1.3-shaped alerting block (routes, dedup, suppress — no rules) still
+// validates, and so does an empty rules array.
+func TestAlertingWithoutRulesValidates(t *testing.T) {
+	p, schema := loadExample(t)
+	alerting := rawAlerting(t, p)
+	delete(alerting, "rules")
+	if r := runSchema(t, p, schema); !r.SchemaOK {
+		t.Errorf("alerting without rules (1.3 shape) must validate; findings: %v", r.Findings)
+	}
+	alerting["rules"] = []any{}
+	if r := runSchema(t, p, schema); !r.SchemaOK {
+		t.Errorf("alerting with rules: [] must validate; findings: %v", r.Findings)
+	}
+}
+
+func TestAlertRuleWithoutExprFailsNamingTheField(t *testing.T) {
+	p, schema := loadExample(t)
+	delete(rawAlertRule(t, p, "PaymentServicePodRestarting"), "expr")
+	r := runSchema(t, p, schema)
+	if r.SchemaOK {
+		t.Fatal("an alerting rule without expr must fail")
+	}
+	f := findingUnder(r, "/spec/alerting/rules/0")
+	if f == nil || !strings.Contains(f.Message, "expr") {
+		t.Errorf("want a finding under /spec/alerting/rules/0 naming expr; got %v", r.Findings)
+	}
+}
+
+func TestAlertRuleWithoutNameFails(t *testing.T) {
+	p, schema := loadExample(t)
+	delete(rawAlertRule(t, p, "PaymentServicePodRestarting"), "name")
+	r := runSchema(t, p, schema)
+	if r.SchemaOK {
+		t.Fatal("an alerting rule without name must fail")
+	}
+	if f := findingUnder(r, "/spec/alerting/rules/0"); f == nil || !strings.Contains(f.Message, "name") {
+		t.Errorf("want a finding under /spec/alerting/rules/0 naming name; got %v", r.Findings)
+	}
+}
+
+func TestAlertRuleBadEngineFailsListingTheValues(t *testing.T) {
+	p, schema := loadExample(t)
+	rawAlertRule(t, p, "PaymentServicePodRestarting")["engine"] = "nagios"
+	r := runSchema(t, p, schema)
+	if r.SchemaOK {
+		t.Fatal("engine: nagios must fail")
+	}
+	f := findingUnder(r, "/spec/alerting/rules/0/engine")
+	if f == nil {
+		t.Fatalf("want a finding at /spec/alerting/rules/0/engine; got %v", r.Findings)
+	}
+	for _, v := range []string{"prometheus", "loki", "grafana", "alertmanager"} {
+		if !strings.Contains(f.Message, v) {
+			t.Errorf("finding should list %q among the allowed engines; got %q", v, f.Message)
+		}
+	}
+}
+
+func TestAlertRuleBadSeverityAndUnknownPropertyFail(t *testing.T) {
+	p, schema := loadExample(t)
+	rule := rawAlertRule(t, p, "PaymentServicePodRestarting")
+	rule["severity"] = "critical" // the engine's label, not the pack's SEV1..SEV4
+	if r := runSchema(t, p, schema); r.SchemaOK || findingUnder(r, "/spec/alerting/rules/0/severity") == nil {
+		t.Errorf("severity: critical must fail at /spec/alerting/rules/0/severity; got %v", r.Findings)
+	}
+	rule["severity"] = "SEV3"
+	rule["keep_firing_for"] = "5m"
+	if r := runSchema(t, p, schema); r.SchemaOK || findingUnder(r, "/spec/alerting/rules/0") == nil {
+		t.Errorf("an unknown property on a rule must fail (additionalProperties: false); got %v", r.Findings)
+	}
+}
+
+func TestEffectiveEngine(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", pack.AlertEnginePrometheus},
+		{"prometheus", pack.AlertEnginePrometheus},
+		{"loki", pack.AlertEngineLoki},
+		{"grafana", pack.AlertEngineGrafana},
+		// The accessor supplies the default, not validation (as EffectiveGoodWhen).
+		{"nagios", "nagios"},
+	} {
+		if got := (pack.AlertRule{Engine: tc.in}).EffectiveEngine(); got != tc.want {
+			t.Errorf("EffectiveEngine(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestPaymentServiceExampleLoads(t *testing.T) {
 	root := repoRoot(t)
 	p, err := pack.Load(filepath.Join(root, "examples", "payment-service.pack.yaml"))

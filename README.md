@@ -113,7 +113,7 @@ Full clause-level rubric in `docs/maturity-model.md`.
 
 | | |
 |---|---|
-| Spec version | 1.3 |
+| Spec version | 1.4 |
 | Author | Carlos Montero |
 | Status | Draft for review |
 | First publication | 2026-05-08 |

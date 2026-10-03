@@ -209,6 +209,7 @@ Each pack section maps to exactly one or two native artefacts the operator gener
 | `policy.forecasts` | Recording rule + alerting rule | YAML | Ruler |
 | `dashboards.*` | Grafana dashboard JSON (schemaVersion 39+) | JSON via provisioning API | Grafana |
 | `alerting.routes` | Alertmanager route tree + receivers | YAML | Alertmanager |
+| `alerting.rules` (spec 1.4) | Operational alerting rules, in the `alert:` file format of §6.2 (`engine: prometheus`, the default) or as Grafana provisioning YAML (`engine: grafana`) | YAML | Prometheus / Mimir ruler, Grafana unified alerting |
 | `alerting.suppress` | Silences + maintenance windows | YAML / API | Alertmanager |
 | `remediation` | Argo Events Sensor + Workflow Template | CRDs | Argo Workflows |
 | `baselines` | Derived metrics from incident-mgmt + alert times | Prom recording rules | Platform observability service |

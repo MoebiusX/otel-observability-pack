@@ -262,9 +262,49 @@ type Forecast struct {
 }
 
 type Alerting struct {
-	Routes   []Route  `json:"routes"`
-	Dedup    string   `json:"dedup,omitempty"`
-	Suppress []string `json:"suppress,omitempty"`
+	Routes   []Route     `json:"routes"`
+	Rules    []AlertRule `json:"rules,omitempty"` // spec 1.4: operational (non-SLO) alert rules
+	Dedup    string      `json:"dedup,omitempty"`
+	Suppress []string    `json:"suppress,omitempty"`
+}
+
+// AlertRule is one operational (non-SLO) alert rule (spec 1.4, §5.8): a rule
+// the service runs that is not a burn-rate alert on an SLO. Name is the
+// rule's exact name in its engine (the key a reconciler joins on); Expr is
+// the condition in the engine's own language. Engine is read through
+// EffectiveEngine, never the raw field, so the default lives in one place.
+type AlertRule struct {
+	Name        string            `json:"name"`
+	Expr        string            `json:"expr"`
+	Severity    string            `json:"severity,omitempty"`
+	For         string            `json:"for,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+	Engine      string            `json:"engine,omitempty"` // spec 1.4: see AlertEngine*; read it through EffectiveEngine
+	Source      string            `json:"source,omitempty"`
+}
+
+// The engines an AlertRule may name (spec 1.4, $defs/AlertEngine): the
+// Product registry's name for each evaluator.
+const (
+	AlertEnginePrometheus      = "prometheus"
+	AlertEngineMimir           = "mimir"
+	AlertEngineThanos          = "thanos"
+	AlertEngineVictoriaMetrics = "victoriametrics"
+	AlertEngineLoki            = "loki"
+	AlertEngineGrafana         = "grafana"
+	AlertEngineAlertmanager    = "alertmanager"
+)
+
+// EffectiveEngine returns the engine that evaluates the rule, reading an
+// absent Engine as AlertEnginePrometheus: spec 1.4 says absent means
+// prometheus, the default binding's ruler. Downstream code reads the engine
+// through this accessor so the default is applied in one place.
+func (r AlertRule) EffectiveEngine() string {
+	if r.Engine == "" {
+		return AlertEnginePrometheus
+	}
+	return r.Engine
 }
 
 type Route struct {

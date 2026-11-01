@@ -394,6 +394,85 @@ func TestEffectiveEngine(t *testing.T) {
 	}
 }
 
+// rawRecordingRules returns the raw (schema-side) recording_rules array of
+// the example. Edits reach the schema pass.
+func rawRecordingRules(t *testing.T, p *pack.Pack) []any {
+	t.Helper()
+	spec, _ := p.Raw["spec"].(map[string]any)
+	queries, _ := spec["queries"].(map[string]any)
+	rules, _ := queries["recording_rules"].([]any)
+	if len(rules) == 0 {
+		t.Fatal("the example declares no recording rules")
+	}
+	return rules
+}
+
+// setFirstRecordingRuleName renames the example's first recording rule and
+// returns the pack ready for the schema pass.
+func setFirstRecordingRuleName(t *testing.T, name string) (*pack.Pack, string) {
+	t.Helper()
+	p, schema := loadExample(t)
+	rule, _ := rawRecordingRules(t, p)[0].(map[string]any)
+	rule["name"] = name
+	return p, schema
+}
+
+// findingOnRecordingRuleName returns the schema finding whose instance path
+// ends in /name under recording_rules, or nil.
+func findingOnRecordingRuleName(r *lint.Result) *lint.Finding {
+	for i := range r.Findings {
+		if strings.Contains(r.Findings[i].Path, "/recording_rules/") && strings.HasSuffix(r.Findings[i].Path, "/name") {
+			return &r.Findings[i]
+		}
+	}
+	return nil
+}
+
+// Since the 2026-11-01 revision of spec 1.4 a recording rule's name is any
+// Prometheus metric name with at least one colon and no empty segment: the
+// names a pack imports from a service's existing rules validate as they are.
+func TestRecordingRuleNameAcceptsThePrometheusGrammar(t *testing.T) {
+	for _, name := range []string{
+		"payment:api_availability:ratio_5m", // the conventional three segments
+		"job:http_requests:rate5m",          // Prometheus' own two-segment convention
+		"checkout:ErrorRatio",               // two segments, mixed case
+		"_hidden:series:v2",                 // leading underscore, as the metric grammar allows
+		"a:b:c:d",                           // more than three segments
+	} {
+		p, schema := setFirstRecordingRuleName(t, name)
+		if r := runSchema(t, p, schema); !r.SchemaOK {
+			t.Errorf("recording rule %q must validate; findings: %v", name, r.Findings)
+		}
+	}
+}
+
+func TestRecordingRuleNameRefusesEmptySegmentsAndPlainMetrics(t *testing.T) {
+	for _, name := range []string{
+		"foo:",          // trailing empty segment
+		"foo::bar",      // empty middle segment
+		":foo:bar",      // empty first segment
+		"http_requests", // no colon: a raw metric, not a recorded series
+		"1payment:x:y",  // a metric name cannot start with a digit
+		"payment:x-y:z", // a hyphen is not in the metric grammar
+		"payment:x:y z", // whitespace
+	} {
+		p, schema := setFirstRecordingRuleName(t, name)
+		r := runSchema(t, p, schema)
+		if r.SchemaOK {
+			t.Errorf("recording rule %q must fail the schema", name)
+			continue
+		}
+		f := findingOnRecordingRuleName(r)
+		if f == nil {
+			t.Errorf("recording rule %q: expected a finding naming the rule's name; got %v", name, r.Findings)
+			continue
+		}
+		if f.Severity != lint.SeverityError || f.Code != "schema/violation" {
+			t.Errorf("recording rule %q: finding must be an error schema/violation; got %+v", name, *f)
+		}
+	}
+}
+
 func TestPaymentServiceExampleLoads(t *testing.T) {
 	root := repoRoot(t)
 	p, err := pack.Load(filepath.Join(root, "examples", "payment-service.pack.yaml"))
